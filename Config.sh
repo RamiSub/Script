@@ -189,7 +189,7 @@ install_xray() {
     bash "$installer" install --version "$XRAY_VERSION" --without-geodata --no-update-service
 
     [[ -x /usr/local/bin/xray ]] || die "Xray installation failed."
-    log "Installed Xray: $(/usr/local/bin/xray version | head -n1)"
+    log "Installed Xray: $(/usr/local/bin/xray version | sed -n '1p')"
 }
 
 generate_credentials() {
@@ -210,11 +210,22 @@ generate_credentials() {
     PASS_SS2="$(openssl rand -hex 24)"
     PASS_SS3="$(openssl rand -hex 24)"
 
-    # Use xray's own key generator.
-    local keyout
-    keyout="$("/usr/local/bin/xray" x25519)"
-    REALITY_PRIVATE_KEY="$(printf '%s\n' "$keyout" | awk -F': ' '/Private key:/{print $2; exit}')"
-    REALITY_PUBLIC_KEY="$(printf '%s\n' "$keyout" | awk -F': ' '/Public key:/{print $2; exit}')"
+    # Xray changed the x25519 CLI output format in 2025.
+    # Older releases: Private key / Public key
+    # Newer releases: PrivateKey / Password (Password == REALITY public key) / Hash32
+    local keyout derived
+    keyout="$(/usr/local/bin/xray x25519 2>&1)"
+
+    REALITY_PRIVATE_KEY="$(printf '%s\n' "$keyout" | awk -F': ' '/^(Private key|PrivateKey):/{print $2; exit}')"
+
+    if [[ -n "$REALITY_PRIVATE_KEY" ]]; then
+        # Derive the client public key from the server private key. This is
+        # compatible with both the old and new x25519 CLI formats.
+        derived="$(/usr/local/bin/xray x25519 -i "$REALITY_PRIVATE_KEY" 2>&1)"
+        REALITY_PUBLIC_KEY="$(printf '%s\n' "$derived" | awk -F': ' '/^(Public key|Password([[:space:]]*\(PublicKey\))?):/{print $2; exit}')"
+    else
+        REALITY_PUBLIC_KEY="$(printf '%s\n' "$keyout" | awk -F': ' '/^(Public key|Password([[:space:]]*\(PublicKey\))?):/{print $2; exit}')"
+    fi
 
     [[ -n "$REALITY_PRIVATE_KEY" && -n "$REALITY_PUBLIC_KEY" ]] ||
         die "Could not generate X25519 REALITY keypair."
@@ -641,7 +652,13 @@ write_xray_config() {
     "rules": [
       {
         "type": "field",
-        "ip": ["geoip:private"],
+        "ip": [
+          "10.0.0.0/8",
+          "172.16.0.0/12",
+          "192.168.0.0/16",
+          "127.0.0.0/8",
+          "169.254.0.0/16"
+        ],
         "outboundTag": "block"
       }
     ]
