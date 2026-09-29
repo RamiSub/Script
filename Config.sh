@@ -114,7 +114,7 @@ install_packages() {
     apt-get install -y -qq \
         ca-certificates curl unzip jq openssl uuid-runtime \
         iproute2 net-tools lsof psmisc \
-        ufw procps coreutils sed awk grep tar gzip
+        ufw procps mawk
 }
 
 detect_server_ip() {
